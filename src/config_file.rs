@@ -117,6 +117,20 @@ pub struct JuliaupOverride {
     pub channel: String,
 }
 
+/// A server added with `juliaup server add`, resolved against in addition to
+/// the primary one.
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
+pub struct JuliaupConfigServer {
+    #[serde(rename = "Url")]
+    pub url: String,
+    #[serde(rename = "Name", skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Resolve against this server before the primary, so its channels
+    /// shadow the primary's rather than the other way round.
+    #[serde(rename = "BeforePrimary", default, skip_serializing_if = "is_default")]
+    pub before_primary: bool,
+}
+
 #[derive(Serialize, Deserialize, Clone, PartialEq, Default)]
 pub struct JuliaupConfig {
     #[serde(rename = "Default")]
@@ -129,6 +143,8 @@ pub struct JuliaupConfig {
     pub settings: JuliaupConfigSettings,
     #[serde(rename = "Overrides", default)]
     pub overrides: Vec<JuliaupOverride>,
+    #[serde(rename = "Servers", default, skip_serializing_if = "Vec::is_empty")]
+    pub servers: Vec<JuliaupConfigServer>,
     #[serde(
         rename = "LastVersionDbUpdate",
         skip_serializing_if = "Option::is_none"
@@ -752,6 +768,7 @@ mod tests {
             juliaupconfig: dir.join("juliaup.json"),
             lockfile: dir.join(".juliaup-lock"),
             versiondb: dir.join("versiondb-test.json"),
+            serversdir: dir.join("servers"),
         }
     }
 

@@ -8,6 +8,8 @@ pub struct GlobalPaths {
     pub juliaupconfig: PathBuf,
     pub lockfile: PathBuf,
     pub versiondb: PathBuf,
+    /// Cached version databases of servers added with `juliaup server add`.
+    pub serversdir: PathBuf,
     #[cfg(feature = "selfupdate")]
     pub juliaupselfhome: PathBuf,
     #[cfg(feature = "selfupdate")]
@@ -72,6 +74,8 @@ pub fn get_paths() -> Result<GlobalPaths> {
 
     let lockfile = juliauphome.join(".juliaup-lock");
 
+    let serversdir = juliauphome.join("servers");
+
     #[cfg(feature = "selfupdate")]
     let juliaupselfhome = my_own_path
         .parent()
@@ -88,6 +92,7 @@ pub fn get_paths() -> Result<GlobalPaths> {
         juliaupconfig,
         lockfile,
         versiondb,
+        serversdir,
         #[cfg(feature = "selfupdate")]
         juliaupselfhome,
         #[cfg(feature = "selfupdate")]

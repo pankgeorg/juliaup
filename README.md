@@ -212,6 +212,29 @@ If requested, the environment variable `JULIAUP_SERVER` can be used to tell Juli
 **Note:** Nightly and PR channels (e.g., `nightly`, `pr123`) require the server to provide `etag` headers in HTTP responses for version tracking.
 If your custom mirror server does not support `etag` headers, these channels will not be available. Regular versioned Julia releases will still work normally.
 
+### Additional servers
+
+Besides the primary server, juliaup can resolve channels against further servers,
+such as one that publishes your organization's own Julia distributions:
+
+```
+juliaup server add https://julia.example.com --name example
+juliaup add myproduct-1.0
+juliaup server list
+juliaup server remove example
+```
+
+Servers are consulted in order: the primary first, then added servers in the order
+they were added, and the first server to define a channel or version wins. Pass
+`--first` to `juliaup server add` to consult a server before the primary one, so
+its channels shadow the primary's. Each added server must serve the same files a
+primary does (`juliaup/RELEASECHANNELDBVERSION` and
+`juliaup/versiondb/versiondb-<version>-<triple>.json`), over HTTPS unless it is on
+localhost. Its database is cached separately and refreshed whenever the version
+database is updated, so an unreachable server only makes its own channels
+unavailable. Channels installed from a server stay installed after it is removed.
+Nightly and PR channels are always resolved against the primary server.
+
 ## Development guides
 
 For juliaup developers, information on how to build juliaup locally, update julia versions, and release updates

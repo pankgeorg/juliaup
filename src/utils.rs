@@ -244,28 +244,42 @@ fn is_loopback_http(url: &Url) -> bool {
         )
 }
 
-pub fn get_juliaserver_base_url() -> Result<Url> {
-    let (base_url, is_custom) = if let Ok(val) = std::env::var("JULIAUP_SERVER") {
-        let url = if val.ends_with('/') {
-            val
-        } else {
-            format!("{}/", val)
-        };
-        (url, true)
+/// Parses a server base URL as juliaup accepts them: with a trailing slash so
+/// paths join under it, and over HTTPS unless the host is loopback.
+pub fn parse_server_url(value: &str) -> Result<Url> {
+    let value = value.trim();
+    let base_url = if value.ends_with('/') {
+        value.to_string()
     } else {
-        ("https://julialang-s3.julialang.org".to_string(), false)
+        format!("{}/", value)
     };
 
     let parsed_url = Url::parse(&base_url).with_context(|| {
         format!(
-            "Failed to parse the value of JULIAUP_SERVER '{}' as a uri.",
+            "Failed to parse the server address '{}' as a uri.",
             base_url
         )
     })?;
 
     if parsed_url.scheme() != "https" && !is_loopback_http(&parsed_url) {
-        bail!("The value of JULIAUP_SERVER '{}' must use HTTPS.", base_url);
+        bail!("The server address '{}' must use HTTPS.", base_url);
     }
+    if parsed_url.host_str().is_none() {
+        bail!("The server address '{}' has no host.", base_url);
+    }
+
+    Ok(parsed_url)
+}
+
+pub fn get_juliaserver_base_url() -> Result<Url> {
+    let (base_url, is_custom) = if let Ok(val) = std::env::var("JULIAUP_SERVER") {
+        (val, true)
+    } else {
+        ("https://julialang-s3.julialang.org".to_string(), false)
+    };
+
+    let parsed_url = parse_server_url(&base_url)
+        .map_err(|err| anyhow!("The value of JULIAUP_SERVER is not usable: {err}"))?;
 
     if is_custom {
         CUSTOM_SERVER_WARNING_SHOWN.get_or_init(|| {

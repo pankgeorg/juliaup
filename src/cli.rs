@@ -66,6 +66,9 @@ pub enum Juliaup {
     Info {},
     #[clap(subcommand, name = "self")]
     SelfSubCmd(SelfSubCmd),
+    #[clap(subcommand, name = "server")]
+    /// Manage the servers Julia versions and channels are resolved against
+    ServerSubCmd(ServerSubCmd),
     /// Generate tab-completion scripts for your shell
     Completions {
         #[arg(value_enum, value_name = "SHELL")]
@@ -149,6 +152,35 @@ pub enum SelfSubCmd {
     #[cfg(not(feature = "selfupdate"))]
     /// Uninstall this version of juliaup from the system (UNAVAILABLE)
     Uninstall {},
+}
+
+#[derive(Parser)]
+#[command(styles = cli_styles::get_styles())]
+/// Manage the servers Julia versions and channels are resolved against.
+/// The primary server (JULIAUP_SERVER, or the official one) is always
+/// consulted; servers added here are consulted after it, and the first
+/// server to define a channel wins.
+pub enum ServerSubCmd {
+    /// List the servers in resolution order
+    #[clap(alias = "ls")]
+    List {},
+    /// Add a server whose channels `juliaup add` can then install
+    Add {
+        /// Base URL of the server; HTTPS unless it is on localhost
+        url: String,
+        /// A short name to refer to the server by
+        #[clap(long)]
+        name: Option<String>,
+        /// Consult this server before the primary one, so its channels shadow the primary's
+        #[clap(long)]
+        first: bool,
+    },
+    /// Remove a server by name or URL; channels installed from it stay installed
+    #[clap(alias = "rm")]
+    Remove {
+        /// Name or URL of the server
+        server: String,
+    },
 }
 
 #[derive(Parser)]

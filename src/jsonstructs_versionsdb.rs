@@ -12,19 +12,19 @@ use std::collections::HashMap;
 //   ]
 // }
 // See discussion at: https://github.com/JuliaLang/juliaup/pull/1320
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct JuliaupVersionDBVersion {
     #[serde(rename = "UrlPath")]
     pub url_path: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct JuliaupVersionDBChannel {
     #[serde(rename = "Version")]
     pub version: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct JuliaupVersionDB {
     #[serde(rename = "AvailableVersions")]
     pub available_versions: HashMap<String, JuliaupVersionDBVersion>,

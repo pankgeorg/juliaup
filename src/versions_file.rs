@@ -3,6 +3,8 @@ use std::{fs::File, io::BufReader};
 // use std::fs::File;
 // use std::io::BufReader;
 // use crate::utils::get_juliaup_home_path;
+use crate::config_file::load_config_db_lockfree;
+use crate::servers::merged_versions_db;
 use crate::{
     get_bundled_dbversion, global_paths::GlobalPaths, jsonstructs_versionsdb::JuliaupVersionDB,
 };
@@ -18,7 +20,19 @@ fn load_vendored_db() -> Result<JuliaupVersionDB> {
     Ok(db)
 }
 
+/// The database channels are resolved against: the primary's, with every
+/// server added with `juliaup server add` merged in, the first to define a
+/// channel or version winning.
 pub fn load_versions_db(paths: &GlobalPaths) -> Result<JuliaupVersionDB> {
+    let primary = load_primary_versions_db(paths)?;
+    let config = load_config_db_lockfree(paths)
+        .with_context(|| "Failed to load the configuration to find configured servers.")?;
+    merged_versions_db(paths, &config.data, primary)
+}
+
+/// The database of the primary server alone: the cached one if it is at
+/// least as new as the bundled one, else the bundled one.
+pub fn load_primary_versions_db(paths: &GlobalPaths) -> Result<JuliaupVersionDB> {
     let file = File::open(&paths.versiondb);
 
     let local_version_db = match file {

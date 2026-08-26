@@ -2491,6 +2491,31 @@ pub fn update_version_db(channel: &Option<String>, paths: &GlobalPaths) -> Resul
         delete_old_version_db = true;
     }
 
+    // Servers added with `juliaup server add` keep a cache each, refreshed
+    // against their own version pointer. One that cannot be reached keeps
+    // its cache and does not stop the update.
+    for server in &old_config_file.data.servers {
+        let url = match crate::utils::parse_server_url(&server.url) {
+            Ok(url) => url,
+            Err(_) => continue,
+        };
+        if let Err(err) = crate::servers::refresh_server_versiondb(
+            paths,
+            &url,
+            crate::servers::SERVER_DBVERSION_PATH,
+        ) {
+            print_juliaup_style(
+                "Warning",
+                &format!(
+                    "Could not update the version database from server {}: {}",
+                    server.name.as_deref().unwrap_or(url.as_str()),
+                    err
+                ),
+                JuliaupMessageType::Warning,
+            );
+        }
+    }
+
     let direct_download_etags = download_direct_download_etags(channel, &old_config_file.data)?;
 
     let mut new_config_file = load_mut_config_db(paths).with_context(|| {

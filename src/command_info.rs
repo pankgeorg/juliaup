@@ -81,5 +81,15 @@ pub fn run_command_info(paths: &GlobalPaths) -> Result<()> {
     println!("Online version db: {}", online_dbversion);
     println!("Local version db: {:?}", local_dbversion);
 
+    let config = crate::config_file::load_config_db_lockfree(paths)
+        .with_context(|| "Failed to load the configuration to list servers.")?;
+    let servers = crate::servers::effective_servers(&config.data)?;
+    if servers.len() > 1 {
+        println!("Servers:");
+        for server in servers {
+            println!("  {} {}", server.display_name(), server.url);
+        }
+    }
+
     Ok(())
 }

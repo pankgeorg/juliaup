@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use juliaup::cli::{ConfigSubCmd, Juliaup, OverrideSubCmd, SelfSubCmd};
+use juliaup::cli::{ConfigSubCmd, Juliaup, OverrideSubCmd, SelfSubCmd, ServerSubCmd};
 use juliaup::command_api::run_command_api;
 use juliaup::command_completions::generate_completion_for_command;
 use juliaup::command_config_autoinstall::run_command_config_autoinstall;
@@ -19,6 +19,9 @@ use juliaup::command_override::{run_command_override_status, run_command_overrid
 use juliaup::command_post_update::run_command_post_update;
 use juliaup::command_remove::run_command_remove;
 use juliaup::command_selfupdate::run_command_selfupdate;
+use juliaup::command_server::{
+    run_command_server_add, run_command_server_list, run_command_server_remove,
+};
 use juliaup::command_status::run_command_status;
 use juliaup::command_update::run_command_update;
 use juliaup::command_update_version_db::run_command_update_version_db;
@@ -157,6 +160,13 @@ fn main() -> Result<()> {
             SelfSubCmd::Uninstall {} => run_command_selfuninstall(&paths),
             #[cfg(not(feature = "selfupdate"))]
             SelfSubCmd::Uninstall {} => run_command_selfuninstall_unavailable(),
+        },
+        Juliaup::ServerSubCmd(subcmd) => match subcmd {
+            ServerSubCmd::List {} => run_command_server_list(&paths),
+            ServerSubCmd::Add { url, name, first } => {
+                run_command_server_add(&url, name, first, &paths)
+            }
+            ServerSubCmd::Remove { server } => run_command_server_remove(&server, &paths),
         },
         Juliaup::ListChannels {} => run_command_list_channels(&paths),
         Juliaup::PostUpdate {} => run_command_post_update(&paths),

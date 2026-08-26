@@ -225,6 +225,7 @@ mod tests {
             juliaupconfig: dir.join("juliaup.json"),
             lockfile: dir.join(".juliaup-lock"),
             versiondb: dir.join("versiondb-test.json"),
+            serversdir: dir.join("servers"),
             #[cfg(feature = "selfupdate")]
             juliaupselfhome: dir.to_path_buf(),
             #[cfg(feature = "selfupdate")]
