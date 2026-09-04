@@ -1,0 +1,159 @@
+name: Preview binaries
+
+# Builds the `server-add` branch and publishes the binaries as the rolling
+# `preview` prerelease of the fork. Inert on the upstream repository.
+
+on:
+  push:
+    branches:
+      - server-add
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.repository_owner != 'JuliaLang'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu
+            runner: ubuntu-latest
+            features: selfupdate,binjuliainstaller,binjulialauncher
+            rustflags:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu
+            runner: ubuntu-latest
+            features: selfupdate,binjuliainstaller,binjulialauncher
+            rustflags: -C target-feature=+crt-static
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu
+            runner: ubuntu-latest
+            features: selfupdate,binjuliainstaller,binjulialauncher
+            rustflags: -C target-feature=+crt-static
+          - target: x86_64-apple-darwin
+            os: macos
+            runner: macos-latest
+            features: selfupdate,binjuliainstaller,binjulialauncher
+            rustflags:
+          - target: aarch64-apple-darwin
+            os: macos
+            runner: macos-latest
+            features: selfupdate,binjuliainstaller,binjulialauncher
+            rustflags:
+          - target: x86_64-pc-windows-msvc
+            os: windows
+            runner: windows-latest
+            features: windowsappinstaller,binjuliainstaller,binjulialauncher
+            rustflags:
+    steps:
+    - uses: actions/checkout@v7
+    - if: ${{ contains(matrix.target, '-musl') }}
+      run: sudo apt-get install musl-tools
+    - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+      with:
+        target: ${{matrix.target}}
+        cache-key: ${{matrix.target}}
+    - if: ${{ matrix.os == 'ubuntu' }}
+      uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
+      with:
+        tool: cross
+    - name: Stamp the preview version
+      shell: bash
+      run: |
+        base=$(perl -ne 'print $1 and exit if /^version = "([^"]+)"/' Cargo.toml)
+        export VERSION="${base}-server.${GITHUB_RUN_NUMBER}"
+        perl -pi -e 'unless ($done) { $done = s/^version = "[^"]+"/version = "$ENV{VERSION}"/ }' Cargo.toml
+        grep -m1 '^version = ' Cargo.toml
+        echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+    - name: Build
+      uses: clechasseur/rs-cargo@9a5c570d3347f8dee3916c8871f3ffaf38909956 # v5.0.8
+      with:
+        command: build
+        tool: ${{ matrix.os == 'ubuntu' && 'cross' || 'cargo' }}
+        args: --release --bins --target ${{matrix.target}} --features ${{matrix.features}}
+      env:
+        CARGO_TARGET_x86_64-unknown-linux-musl: ${{matrix.rustflags}}
+        CARGO_TARGET_aarch64-unknown-linux-musl: ${{matrix.rustflags}}
+        AWS_LC_SYS_CMAKE_BUILDER: "1"
+    - name: Package
+      shell: bash
+      run: |
+        ext=""
+        if [[ "${{ matrix.os }}" == "windows" ]]; then ext=".exe"; fi
+        mkdir -p dist
+        tar -czf "dist/juliaup-${VERSION}-${{ matrix.target }}.tar.gz" \
+          -C "target/${{ matrix.target }}/release" "juliaup${ext}" "julialauncher${ext}" "julia${ext}"
+        cp "target/${{ matrix.target }}/release/juliainstaller${ext}" \
+          "dist/juliainstaller-${VERSION}-${{ matrix.target }}${ext}"
+    - uses: actions/upload-artifact@v7
+      with:
+        name: preview-${{ matrix.target }}
+        path: dist/
+        if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.repository_owner != 'JuliaLang'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/download-artifact@v8
+      with:
+        pattern: preview-*
+        merge-multiple: true
+        path: dist
+    - name: Publish the rolling prerelease
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        base=$(perl -ne 'print $1 and exit if /^version = "([^"]+)"/' Cargo.toml)
+        version="${base}-server.${GITHUB_RUN_NUMBER}"
+        printf '%s' "$version" > dist/RELEASECHANNELJULIAUPVERSION
+        sed "s/THISISREPLACEDWITHREALVERSIONINGITHUBWORKFLOW/${version}/" \
+          deploy/shellscript/juliaup-init.sh > dist/juliaup-init.sh
+        cp .github/preview-install.sh dist/install.sh
+
+        cat > notes.md <<NOTES
+        Preview build **${version}** of the \`server-add\` branch (\`${GITHUB_SHA}\`), which adds \`juliaup server add/list/remove\`.
+
+        Rebuilt on every push to the branch; the \`preview\` tag moves with it.
+
+        ## Install
+
+        \`\`\`sh
+        curl -fsSL https://github.com/${GITHUB_REPOSITORY}/releases/download/preview/install.sh | sh
+        \`\`\`
+
+        Linux and macOS. The script replaces the \`juliaup\`, \`julialauncher\` and \`julia\` binaries of the juliaup on your PATH with this build, after turning off juliaup's periodic self-update, which would otherwise put the official release back. Without a juliaup installed it runs the official installer first, so the depot and PATH are set up the usual way. Installed Julia versions and channels are untouched.
+
+        To return to the official release:
+
+        \`\`\`sh
+        juliaup self update
+        \`\`\`
+
+        On Windows, or to do it by hand, unpack \`juliaup-${version}-<target>.tar.gz\` over the binaries next to \`juliaup\`.
+
+        ## Serving this build as a juliaup server
+
+        The assets are named as juliaup expects them under \`juliaup/bin/\` on a \`JULIAUP_SERVER\`, and \`RELEASECHANNELJULIAUPVERSION\` belongs at \`juliaup/RELEASECHANNELJULIAUPVERSION\`. A server laid out that way installs this build through \`juliaup self update\`, and the \`juliaup-init.sh\` asset (the install script stamped with this version) installs from it: \`JULIAUP_SERVER=https://server sh juliaup-init.sh\`.
+        NOTES
+
+        gh release delete preview --cleanup-tag --yes || true
+        gh release create preview \
+          --prerelease \
+          --target "$GITHUB_SHA" \
+          --title "Preview ${version}" \
+          --notes-file notes.md \
+          dist/*
