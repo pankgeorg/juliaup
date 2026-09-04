@@ -1,8 +1,11 @@
-use crate::config_file::{load_config_db, load_mut_config_db, save_config_db, JuliaupConfigServer};
+use crate::config_file::{
+    load_config_db, load_mut_config_db, save_config_db, JuliaupConfig, JuliaupConfigFile,
+    JuliaupConfigServer,
+};
 use crate::global_paths::GlobalPaths;
 use crate::servers::{
     effective_servers, find_server, load_server_versiondb, merged_versions_db,
-    refresh_server_versiondb, server_cache_id, server_versiondb_path, Refresh,
+    refresh_server_versiondb, server_cache_id, server_url_from_arg, server_versiondb_path, Refresh,
     SERVER_DBVERSION_PATH,
 };
 use crate::utils::{
@@ -14,6 +17,7 @@ use cli_table::{
     format::{Border, HorizontalLine, Separator},
     print_stdout, ColorChoice, Table, WithTitle,
 };
+use url::Url;
 
 #[derive(Table)]
 struct ServerRow {
@@ -67,13 +71,25 @@ pub fn run_command_server_list(paths: &GlobalPaths) -> Result<()> {
     Ok(())
 }
 
+/// Fails when `name` is already used by a server other than the one at `url`.
+fn check_name_free(config: &JuliaupConfig, url: &Url, name: Option<&str>) -> Result<()> {
+    if let Some(name) = name {
+        if let Some(index) = find_server(config, name) {
+            if parse_server_url(&config.servers[index].url).ok().as_ref() != Some(url) {
+                bail!("A server named `{name}` is already configured.");
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn run_command_server_add(
     url: &str,
     name: Option<String>,
     first: bool,
     paths: &GlobalPaths,
 ) -> Result<()> {
-    let url = parse_server_url(url)?;
+    let url = server_url_from_arg(url)?;
     let primary = get_juliaserver_base_url()?;
     if url == primary {
         bail!("`{url}` is already the primary server; set JULIAUP_SERVER to change that.");
@@ -84,20 +100,14 @@ pub fn run_command_server_add(
         }
     }
 
-    // Duplicate checks first, under a short-lived shared lock, so a typo
-    // fails before any network traffic.
-    {
+    // Name conflicts fail before any network traffic. Whether the URL is
+    // already configured decides how a failed fetch is reported.
+    let configured = {
         let config_file = load_config_db(paths, None)
             .with_context(|| "`server add` command failed to load configuration data.")?;
-        if find_server(&config_file.data, url.as_str()).is_some() {
-            bail!("`{url}` is already configured; see `juliaup server list`.");
-        }
-        if let Some(name) = &name {
-            if find_server(&config_file.data, name).is_some() {
-                bail!("A server named `{name}` is already configured.");
-            }
-        }
-    }
+        check_name_free(&config_file.data, &url, name.as_deref())?;
+        find_server(&config_file.data, url.as_str()).is_some()
+    };
 
     // Fetch the server's database with no lock held. This is where an
     // unreachable or non-juliaup server is rejected.
@@ -106,8 +116,13 @@ pub fn run_command_server_add(
         &format!("the version database at {url}"),
         JuliaupMessageType::Progress,
     );
-    let version = match refresh_server_versiondb(paths, &url, SERVER_DBVERSION_PATH) {
-        Ok(Refresh::Downloaded(v)) | Ok(Refresh::UpToDate(v)) => v,
+    let refresh = match refresh_server_versiondb(paths, &url, SERVER_DBVERSION_PATH) {
+        Ok(refresh) => refresh,
+        Err(err) if configured => {
+            return Err(err.context(format!(
+                "`{url}` is configured, but its version database could not be read."
+            )));
+        }
         Err(err) => {
             let _ = std::fs::remove_dir_all(paths.serversdir.join(server_cache_id(&url)));
             return Err(err.context(format!(
@@ -115,11 +130,17 @@ pub fn run_command_server_add(
             )));
         }
     };
+    let database = match &refresh {
+        Refresh::Downloaded(version) => format!("database updated to {version}"),
+        Refresh::UpToDate(version) => format!("database {version} up to date"),
+    };
 
     let mut config_file = load_mut_config_db(paths)
         .with_context(|| "`server add` command failed to load configuration data.")?;
-    if find_server(&config_file.data, url.as_str()).is_some() {
-        bail!("`{url}` is already configured; see `juliaup server list`.");
+    check_name_free(&config_file.data, &url, name.as_deref())?;
+
+    if let Some(index) = find_server(&config_file.data, url.as_str()) {
+        return update_configured_server(&mut config_file, index, name, first, &database, paths);
     }
 
     let primary_db = load_primary_versions_db(paths)?;
@@ -153,7 +174,7 @@ pub fn run_command_server_add(
         .count();
 
     let label = name.unwrap_or_else(|| url.to_string());
-    let mut summary = format!("server {label} (database {version}): {gained} new channel(s)");
+    let mut summary = format!("server {label} ({database}): {gained} new channel(s)");
     if first {
         summary.push_str(&format!(", {changed} existing channel(s) now resolve here"));
     } else {
@@ -166,12 +187,61 @@ pub fn run_command_server_add(
     Ok(())
 }
 
+/// Applies `--name` and `--first` to a server that is already configured, so
+/// that repeating `server add` converges on the requested state instead of
+/// failing.
+fn update_configured_server(
+    config_file: &mut JuliaupConfigFile,
+    index: usize,
+    name: Option<String>,
+    first: bool,
+    database: &str,
+    paths: &GlobalPaths,
+) -> Result<()> {
+    let server = &mut config_file.data.servers[index];
+    let mut changes = Vec::new();
+    if let Some(name) = name {
+        if server.name.as_ref() != Some(&name) {
+            changes.push(format!("now named {name}"));
+            server.name = Some(name);
+        }
+    }
+    if server.before_primary != first {
+        changes.push(if first {
+            "now consulted before the primary server".to_string()
+        } else {
+            "now consulted after the primary server".to_string()
+        });
+        server.before_primary = first;
+    }
+    let label = server.name.clone().unwrap_or_else(|| server.url.clone());
+
+    if changes.is_empty() {
+        print_juliaup_style(
+            "Unchanged",
+            &format!("server {label} is already configured ({database})."),
+            JuliaupMessageType::Success,
+        );
+        return Ok(());
+    }
+
+    save_config_db(config_file, paths).with_context(|| "Failed to save the configuration file.")?;
+    print_juliaup_style(
+        "Updated",
+        &format!("server {label}: {} ({database}).", changes.join(", ")),
+        JuliaupMessageType::Success,
+    );
+    Ok(())
+}
+
 pub fn run_command_server_remove(server: &str, paths: &GlobalPaths) -> Result<()> {
     let mut config_file = load_mut_config_db(paths)
         .with_context(|| "`server remove` command failed to load configuration data.")?;
 
     let Some(index) = find_server(&config_file.data, server) else {
-        if server == "primary" || parse_server_url(server).ok() == get_juliaserver_base_url().ok() {
+        if server == "primary"
+            || server_url_from_arg(server).ok() == get_juliaserver_base_url().ok()
+        {
             bail!("The primary server cannot be removed; set JULIAUP_SERVER to replace it.");
         }
         bail!("No server named or at `{server}` is configured; see `juliaup server list`.");

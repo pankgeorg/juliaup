@@ -1,8 +1,9 @@
 use std::io::BufReader;
 
-use crate::config_file::load_config_db;
+use crate::config_file::{load_config_db, load_config_db_lockfree};
 use crate::jsonstructs_versionsdb::JuliaupVersionDB;
 use crate::operations::download_juliaup_version;
+use crate::servers::effective_servers;
 use crate::utils::get_juliaserver_base_url;
 use crate::{get_bundled_dbversion, global_paths::GlobalPaths};
 use crate::{get_juliaup_target, get_own_version};
@@ -81,9 +82,9 @@ pub fn run_command_info(paths: &GlobalPaths) -> Result<()> {
     println!("Online version db: {}", online_dbversion);
     println!("Local version db: {:?}", local_dbversion);
 
-    let config = crate::config_file::load_config_db_lockfree(paths)
+    let config = load_config_db_lockfree(paths)
         .with_context(|| "Failed to load the configuration to list servers.")?;
-    let servers = crate::servers::effective_servers(&config.data)?;
+    let servers = effective_servers(&config.data)?;
     if servers.len() > 1 {
         println!("Servers:");
         for server in servers {

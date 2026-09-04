@@ -79,29 +79,32 @@ pub fn effective_servers(config: &JuliaupConfig) -> Result<Vec<ServerEntry>> {
 
 /// A filesystem-safe identifier for a server, from its host, port and path:
 /// `https://internal.juliahub.com/juliabin/` becomes
-/// `internal.juliahub.com_juliabin`.
+/// `internal.juliahub.com_juliabin`. Underscores in the input are doubled so
+/// that paths differing only in `_` versus `/` get distinct identifiers.
 pub fn server_cache_id(url: &Url) -> String {
     let mut raw = String::new();
     if let Some(host) = url.host_str() {
         raw.push_str(host);
     }
     if let Some(port) = url.port() {
-        raw.push('_');
+        raw.push('/');
         raw.push_str(&port.to_string());
     }
-    raw.push_str(url.path());
+    let path = url.path().trim_matches('/');
+    if !path.is_empty() {
+        raw.push('/');
+        raw.push_str(path);
+    }
 
-    let id: String = raw
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    id.trim_matches('_').to_string()
+    let mut id = String::with_capacity(raw.len());
+    for c in raw.chars() {
+        match c {
+            '_' => id.push_str("__"),
+            c if c.is_ascii_alphanumeric() || c == '.' || c == '-' => id.push(c),
+            _ => id.push('_'),
+        }
+    }
+    id
 }
 
 /// Where the raw database of an added server is cached for this target.
@@ -252,9 +255,20 @@ pub fn merged_versions_db(
     Ok(merge_version_dbs(dbs))
 }
 
+/// Parses a server given on the command line: a URL as `JULIAUP_SERVER`
+/// accepts, or a bare host such as `julia.example.com`, taken as HTTPS.
+pub fn server_url_from_arg(value: &str) -> Result<Url> {
+    let value = value.trim();
+    if value.contains("://") {
+        parse_server_url(value)
+    } else {
+        parse_server_url(&format!("https://{value}"))
+    }
+}
+
 /// Finds a configured server by its name or URL.
 pub fn find_server(config: &JuliaupConfig, needle: &str) -> Option<usize> {
-    let wanted_url = parse_server_url(needle).ok();
+    let wanted_url = server_url_from_arg(needle).ok();
     config.servers.iter().position(|server| {
         server.name.as_deref() == Some(needle)
             || wanted_url
@@ -386,12 +400,36 @@ mod tests {
 
     #[test]
     fn cache_id_is_filesystem_safe_and_distinct() {
-        let a = Url::parse("https://internal.juliahub.com/juliabin/").unwrap();
-        let b = Url::parse("http://localhost:8899/").unwrap();
-        let c = Url::parse("https://internal.juliahub.com/other/").unwrap();
-        assert_eq!(server_cache_id(&a), "internal.juliahub.com_juliabin");
-        assert_eq!(server_cache_id(&b), "localhost_8899");
-        assert_ne!(server_cache_id(&a), server_cache_id(&c));
+        let id = |s: &str| server_cache_id(&Url::parse(s).unwrap());
+        assert_eq!(
+            id("https://internal.juliahub.com/juliabin/"),
+            "internal.juliahub.com_juliabin"
+        );
+        assert_eq!(id("http://localhost:8899/"), "localhost_8899");
+        assert_ne!(
+            id("https://internal.juliahub.com/juliabin/"),
+            id("https://internal.juliahub.com/other/")
+        );
+        assert_ne!(id("https://h.example/a_b/"), id("https://h.example/a/b/"));
+        assert!(id("https://h.example/a%20b/c:d")
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')));
+    }
+
+    #[test]
+    fn server_url_from_arg_defaults_to_https() {
+        assert_eq!(
+            server_url_from_arg("julia.example.com").unwrap().as_str(),
+            "https://julia.example.com/"
+        );
+        assert_eq!(
+            server_url_from_arg(" https://julia.example.com/dist ")
+                .unwrap()
+                .as_str(),
+            "https://julia.example.com/dist/"
+        );
+        assert!(server_url_from_arg("http://julia.example.com").is_err());
+        assert!(server_url_from_arg("http://localhost:8899").is_ok());
     }
 
     #[test]
@@ -441,6 +479,10 @@ mod tests {
         );
         assert_eq!(
             find_server(&config, "https://internal.juliahub.com/juliabin/"),
+            Some(0)
+        );
+        assert_eq!(
+            find_server(&config, "internal.juliahub.com/juliabin"),
             Some(0)
         );
         assert_eq!(find_server(&config, "other"), None);

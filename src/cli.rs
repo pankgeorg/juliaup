@@ -164,9 +164,10 @@ pub enum ServerSubCmd {
     /// List the servers in resolution order
     #[clap(alias = "ls")]
     List {},
-    /// Add a server whose channels `juliaup add` can then install
+    /// Add a server whose channels `juliaup add` can then install; adding a
+    /// configured server again refreshes its database and applies the options
     Add {
-        /// Base URL of the server; HTTPS unless it is on localhost
+        /// Base URL of the server (HTTPS unless it is on localhost); a bare host is taken as HTTPS
         url: String,
         /// A short name to refer to the server by
         #[clap(long)]

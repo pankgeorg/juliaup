@@ -227,7 +227,10 @@ juliaup server remove example
 Servers are consulted in order: the primary first, then added servers in the order
 they were added, and the first server to define a channel or version wins. Pass
 `--first` to `juliaup server add` to consult a server before the primary one, so
-its channels shadow the primary's. Each added server must serve the same files a
+its channels shadow the primary's. Adding a server that is already configured
+succeeds: it refreshes the server's database and applies `--name` and `--first`,
+so the command can be repeated, for instance from a setup script. A bare host name
+is taken as an HTTPS URL. Each added server must serve the same files a
 primary does (`juliaup/RELEASECHANNELDBVERSION` and
 `juliaup/versiondb/versiondb-<version>-<triple>.json`), over HTTPS unless it is on
 localhost. Its database is cached separately and refreshed whenever the version

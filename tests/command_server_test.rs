@@ -141,12 +141,55 @@ fn server_add_resolves_and_installs_a_foreign_channel() {
         .success()
         .stdout(predicate::str::contains(CHANNEL));
 
-    // Adding the same server twice, by URL or by name, is refused.
+    // Adding the same server again is a no-op that succeeds; with options it
+    // applies them. The URL may be given with or without a trailing slash.
     env.juliaup()
         .args(["server", "add", &format!("{}/", server.base_url)])
         .assert()
-        .failure()
+        .success()
+        .stderr(predicate::str::contains("Unchanged"))
         .stderr(predicate::str::contains("already configured"));
+    let config = std::fs::read_to_string(env.config_path()).unwrap();
+    assert_eq!(config.matches("\"Url\"").count(), 1, "config: {config}");
+    assert!(config.contains("\"mock\""), "config: {config}");
+
+    env.juliaup()
+        .args([
+            "server",
+            "add",
+            &server.base_url,
+            "--name",
+            "mock",
+            "--first",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Updated"))
+        .stderr(predicate::str::contains("before the primary"));
+    env.juliaup()
+        .args(["server", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_match("(?m)^ *1 +mock ").unwrap());
+    env.juliaup()
+        .args([
+            "server",
+            "add",
+            &server.base_url,
+            "--name",
+            "mock",
+            "--first",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Unchanged"));
+    env.juliaup()
+        .args(["server", "add", &server.base_url])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("after the primary"));
+
+    // A name is unique across servers.
     env.juliaup()
         .args(["server", "add", "http://127.0.0.1:9/", "--name", "mock"])
         .assert()
@@ -165,6 +208,16 @@ fn server_add_resolves_and_installs_a_foreign_channel() {
 
     // Removing the server drops the channel from what can be added, but not
     // what is installed.
+    let port = server.base_url.rsplit(':').next().unwrap();
+    let cache_dir = env
+        .depot_path()
+        .join("juliaup")
+        .join("servers")
+        .join(format!("127.0.0.1_{port}"));
+    assert!(
+        cache_dir.exists(),
+        "server cache should be at {cache_dir:?}"
+    );
     env.juliaup()
         .args(["server", "remove", "mock"])
         .assert()
@@ -173,15 +226,7 @@ fn server_add_resolves_and_installs_a_foreign_channel() {
 
     let config = std::fs::read_to_string(env.config_path()).unwrap();
     assert!(!config.contains("\"Servers\""), "config: {config}");
-    let port = server.base_url.rsplit(':').next().unwrap();
-    assert!(
-        !env.depot_path()
-            .join("juliaup")
-            .join("servers")
-            .join(format!("127.0.0.1_{port}"))
-            .exists(),
-        "server cache should be gone"
-    );
+    assert!(!cache_dir.exists(), "server cache should be gone");
 
     env.juliaup()
         .arg("list")
